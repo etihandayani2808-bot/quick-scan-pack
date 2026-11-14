@@ -11,20 +11,17 @@ const uri = process.env.MONGO_URL;
 const dbName = process.env.DB_NAME || 'themakeupguru_packing';
 
 let cachedClient = null;
-let cachedDb = null;
 
 async function connectToDatabase() {
-  if (cachedDb) return cachedDb;
-  if (!uri) throw new Error('MONGO_URL belum terpasang di Environment Variables Vercel');
+  if (!uri) throw new Error('MONGO_URL belum terpasang di Vercel');
   if (!cachedClient) {
     cachedClient = new MongoClient(uri, {
+      maxPoolSize: 1,
       serverSelectionTimeoutMS: 5000,
     });
-    await cachedClient.connect();
   }
-  const db = cachedClient.db(dbName);
-  cachedDb = db;
-  return db;
+  await cachedClient.connect();
+  return cachedClient.db(dbName);
 }
 
 function getWIBNow() {
@@ -60,6 +57,7 @@ app.get('/api/settings', async (req, res) => {
       expeditions: docs.filter((x) => x.kind === 'expedition').map((x) => x.name),
     });
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: 'Gagal memuat data: ' + err.message });
   }
 });
@@ -80,6 +78,7 @@ app.post('/api/settings/:kind', async (req, res) => {
     await db.collection('settings').insertOne({ kind, name });
     res.json({ name });
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: 'Gagal menyimpan ke database: ' + err.message });
   }
 });
@@ -90,6 +89,7 @@ app.delete('/api/settings/:kind/:name', async (req, res) => {
     await db.collection('settings').deleteOne({ kind: req.params.kind, name: decodeURIComponent(req.params.name) });
     res.json({ ok: true });
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: err.message });
   }
 });
@@ -115,6 +115,7 @@ app.post('/api/scans', async (req, res) => {
     await db.collection('scans').insertOne({ ...doc });
     res.json(cleanScan(doc));
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: 'Gagal menyimpan scan: ' + err.message });
   }
 });
@@ -131,6 +132,7 @@ app.get('/api/scans', async (req, res) => {
     const docs = await db.collection('scans').find(q, { projection: { _id: 0 } }).sort({ created_at: -1 }).limit(Number(limit)).toArray();
     res.json(docs.map(cleanScan));
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: err.message });
   }
 });
@@ -151,6 +153,7 @@ app.get('/api/stats', async (req, res) => {
     };
     res.json({ total: docs.length, packers: count('nama_packer'), expeditions: count('nama_ekspedisi') });
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: err.message });
   }
 });
@@ -167,6 +170,7 @@ app.put('/api/scans/:scan_id', async (req, res) => {
     await db.collection('scans').updateOne({ id: scan_id }, { $set: { tanggal, nomor_pesanan, nama_packer, nama_ekspedisi } });
     res.json(cleanScan({ ...existing, tanggal, nomor_pesanan, nama_packer, nama_ekspedisi }));
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: err.message });
   }
 });
@@ -178,6 +182,7 @@ app.delete('/api/scans/:scan_id', async (req, res) => {
     if (!result.deletedCount) return res.status(404).json({ detail: 'Data tidak ditemukan' });
     res.json({ ok: true });
   } catch (err) {
+    cachedClient = null;
     res.status(500).json({ detail: err.message });
   }
 });
