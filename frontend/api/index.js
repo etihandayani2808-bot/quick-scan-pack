@@ -10,15 +10,19 @@ app.use(express.json());
 const uri = process.env.MONGO_URL;
 const dbName = process.env.DB_NAME || 'themakeupguru_packing';
 
+let cachedClient = null;
 let cachedDb = null;
 
 async function connectToDatabase() {
   if (cachedDb) return cachedDb;
-  const client = new MongoClient(uri);
-  await client.connect();
-  const db = client.db(dbName);
-  await db.collection('scans').createIndex({ tanggal: 1, nomor_pesanan: 1 }, { unique: true }).catch(() => {});
-  await db.collection('settings').createIndex({ kind: 1, name: 1 }, { unique: true }).catch(() => {});
+  if (!uri) throw new Error('MONGO_URL belum terpasang di Environment Variables Vercel');
+  if (!cachedClient) {
+    cachedClient = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+    });
+    await cachedClient.connect();
+  }
+  const db = cachedClient.db(dbName);
   cachedDb = db;
   return db;
 }
@@ -56,7 +60,7 @@ app.get('/api/settings', async (req, res) => {
       expeditions: docs.filter((x) => x.kind === 'expedition').map((x) => x.name),
     });
   } catch (err) {
-    res.status(500).json({ detail: err.message });
+    res.status(500).json({ detail: 'Gagal memuat data: ' + err.message });
   }
 });
 
@@ -69,17 +73,21 @@ app.post('/api/settings/:kind', async (req, res) => {
   if (!name) return res.status(400).json({ detail: 'Nama tidak boleh kosong' });
   try {
     const db = await connectToDatabase();
+    const existing = await db.collection('settings').findOne({ kind, name });
+    if (existing) {
+      return res.status(409).json({ detail: 'Nama sudah tersedia' });
+    }
     await db.collection('settings').insertOne({ kind, name });
     res.json({ name });
   } catch (err) {
-    res.status(409).json({ detail: 'Nama sudah tersedia' });
+    res.status(500).json({ detail: 'Gagal menyimpan ke database: ' + err.message });
   }
 });
 
 app.delete('/api/settings/:kind/:name', async (req, res) => {
   try {
     const db = await connectToDatabase();
-    await db.collection('settings').deleteOne({ kind: req.params.kind, name: req.params.name });
+    await db.collection('settings').deleteOne({ kind: req.params.kind, name: decodeURIComponent(req.params.name) });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ detail: err.message });
@@ -100,13 +108,14 @@ app.post('/api/scans', async (req, res) => {
   };
   try {
     const db = await connectToDatabase();
+    const existing = await db.collection('scans').findOne({ tanggal, nomor_pesanan });
+    if (existing) {
+      return res.status(409).json({ detail: 'Nomor pesanan sudah tercatat hari ini.' });
+    }
     await db.collection('scans').insertOne({ ...doc });
     res.json(cleanScan(doc));
   } catch (err) {
-    if (err.code === 11000 || String(err).toLowerCase().includes('duplicate')) {
-      return res.status(409).json({ detail: 'Nomor pesanan sudah tercatat hari ini.' });
-    }
-    res.status(500).json({ detail: err.message });
+    res.status(500).json({ detail: 'Gagal menyimpan scan: ' + err.message });
   }
 });
 
@@ -137,7 +146,7 @@ app.get('/api/stats', async (req, res) => {
         out[d[key]] = (out[d[key]] || 0) + 1;
       });
       return Object.entries(out)
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .sort((a, b) => b - a || a.localeCompare(b))
         .map(([name, c]) => ({ name, count: c }));
     };
     res.json({ total: docs.length, packers: count('nama_packer'), expeditions: count('nama_ekspedisi') });
