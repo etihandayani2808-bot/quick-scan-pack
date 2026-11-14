@@ -145,10 +145,11 @@ app.get('/api/stats', async (req, res) => {
     const count = (key) => {
       const out = {};
       docs.forEach((d) => {
-        out[d[key]] = (out[d[key]] || 0) + 1;
+        const val = d[key] || 'Tidak Diketahui';
+        out[val] = (out[val] || 0) + 1;
       });
       return Object.entries(out)
-        .sort((a, b) => b - a || a.localeCompare(b))
+        .sort((a, b) => (b[1] - a[1]) || String(a[0]).localeCompare(String(b[0])))
         .map(([name, c]) => ({ name, count: c }));
     };
     res.json({ total: docs.length, packers: count('nama_packer'), expeditions: count('nama_ekspedisi') });
